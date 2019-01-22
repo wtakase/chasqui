@@ -19,6 +19,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
 )
 
 // Server represents a file server which responds to HTTP GET requests for files
@@ -66,7 +69,11 @@ func init() {
 // The server will only accept connections from clients with
 // certificates issued by any of the certificate authorities in the
 // ca file.
-func NewServer(addr, cert, key, ca string) (*Server, error) {
+func NewServer(addr, cert, key, ca string, plainHttp bool) (*Server, error) {
+	if plainHttp {
+		return NewPlainServer(addr)
+	}
+
 	// Load this server's certificate
 	absCert, err := filepath.Abs(cert)
 	if err != nil {
@@ -138,20 +145,48 @@ func NewServer(addr, cert, key, ca string) (*Server, error) {
 	return fs, nil
 }
 
+// NewPlainServer creates a new file server. The server will listen for HTTP
+// requests on the addr address.
+func NewPlainServer(addr string) (*Server, error) {
+        fs := &Server{
+                // Network address this file server listens on
+                addr: addr,
+        }
+        return fs, nil
+}
+
 // Serve listens for new incoming HTTP requests and serves them
-func (fs *Server) Serve() error {
+func (fs *Server) Serve(plainHttp, useHttp1 bool) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/file", handleGetFile)
 	mux.HandleFunc("/", http.NotFound)
-	srv := &http.Server{
-		Addr:      fs.addr,
-		Handler:   mux,
-		TLSConfig: fs.tlsConfig,
-		// ReadTimeout:  60 * time.Second,  // TODO: what these values should be?
-		// WriteTimeout: 60 * time.Second,
-		// IdleTimeout: 120 * time.Second, // Go v1.8 onwards
+
+	if plainHttp {
+		var handler http.Handler
+		if useHttp1 {
+			handler = mux
+		} else {
+			handler = h2c.NewHandler(mux, &http2.Server{})
+		}
+		srv := &http.Server{
+			Addr:      fs.addr,
+			Handler:   handler,
+			// ReadTimeout:  60 * time.Second,  // TODO: what these values should be?
+			// WriteTimeout: 60 * time.Second,
+			// IdleTimeout: 120 * time.Second, // Go v1.8 onwards
+		}
+		return srv.ListenAndServe()
+	} else {
+		srv := &http.Server{
+			Addr:      fs.addr,
+			Handler:   mux,
+			TLSConfig: fs.tlsConfig,
+			// ReadTimeout:  60 * time.Second,  // TODO: what these values should be?
+			// WriteTimeout: 60 * time.Second,
+			// IdleTimeout: 120 * time.Second, // Go v1.8 onwards
+		}
+		return srv.ListenAndServeTLS("", "")
 	}
-	return srv.ListenAndServeTLS("", "")
 }
 
 // handleGetFile handles GET requests for files. The form of the
@@ -212,22 +247,24 @@ func handleGetFile(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 
-	// Retrieve client's certificate, if any
-	isClientAnonymous := len(req.TLS.PeerCertificates) == 0
-	if isClientAnonymous {
-		// Ensure that an anonymous client can access the requested file
-		if !isAuthorized(fileID, size, "", "") {
-			http.Error(w, "403 Forbidden: you are not authorized to retrieve the requested file", http.StatusForbidden)
-			return
-		}
-	} else {
-		// Retrieve the client's certificate and make sure it is authorized
-		// to retrieve the requested file
-		for _, cert := range req.TLS.PeerCertificates {
-			issuer, subject := getCertName(cert.Issuer), getCertName(cert.Subject)
-			if !isAuthorized(fileID, size, subject, issuer) {
+	if req.URL.Scheme == "https" {
+		// Retrieve client's certificate, if any
+		isClientAnonymous := len(req.TLS.PeerCertificates) == 0
+		if isClientAnonymous {
+			// Ensure that an anonymous client can access the requested file
+			if !isAuthorized(fileID, size, "", "") {
 				http.Error(w, "403 Forbidden: you are not authorized to retrieve the requested file", http.StatusForbidden)
 				return
+			}
+		} else {
+			// Retrieve the client's certificate and make sure it is authorized
+			// to retrieve the requested file
+			for _, cert := range req.TLS.PeerCertificates {
+				issuer, subject := getCertName(cert.Issuer), getCertName(cert.Subject)
+				if !isAuthorized(fileID, size, subject, issuer) {
+					http.Error(w, "403 Forbidden: you are not authorized to retrieve the requested file", http.StatusForbidden)
+					return
+				}
 			}
 		}
 	}

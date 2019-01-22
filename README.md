@@ -85,7 +85,7 @@ $ chasqui driver --help
 To **build from sources**, you need to have installed the [Go programming environment](https://golang.org) and then do:
 
 ```
-go get -u github.com/airnandez/chasqui
+go get -u github.com/wtakase/chasqui
 ```
 
 ## Feedback

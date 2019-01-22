@@ -10,6 +10,7 @@ import (
 	"hash"
 	"io"
 	"io/ioutil"
+	"net"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -30,7 +31,11 @@ type Client struct {
 // cert and key are the filenames of the certificate and key files the client will use
 // to identify itself with the server. ca is the file name of the certificate authorities' certificates the
 // client will accept and use to authenticate the server
-func NewClient(useHttp1 bool, cert, key, ca string) (*Client, error) {
+func NewClient(useHttp1 bool, cert, key, ca string, plainHttp bool) (*Client, error) {
+	if plainHttp {
+		return NewPlainClient(useHttp1)
+	}
+
 	// Prepare client TLS configuration
 	bothZero := len(cert) == 0 && len(key) == 0
 	bothNonZero := len(cert) != 0 && len(key) != 0
@@ -86,6 +91,25 @@ func NewClient(useHttp1 bool, cert, key, ca string) (*Client, error) {
 	return &Client{http.Client{Transport: tr}}, nil
 }
 
+// NewPlainClient creates a new client to interact with a fileserver.
+// Set useHttp1 to true for this client to use HTTP1 instead of HTTP2, which is the default.
+func NewPlainClient(useHttp1 bool) (*Client, error) {
+	if useHttp1 {
+		tr := &http.Transport{
+			MaxIdleConnsPerHost: 100, // TODO: what would be a sensible value?
+		}
+		return &Client{http.Client{Transport: tr}}, nil
+	} else {
+		tr := &http2.Transport{
+			AllowHTTP: true,
+			DialTLS: func(netw, addr string, cfg *tls.Config) (net.Conn, error) {
+				return net.Dial(netw, addr)
+			},
+		}
+		return &Client{http.Client{Transport: tr}}, nil
+	}
+}
+
 type DownloadReport struct {
 
 	// Start and end times of the download operation
@@ -108,7 +132,7 @@ type DownloadReport struct {
 // DownloadFile emits a HTTP request against the specified server to download a file given its file identifier ans size (in bytes).
 // chkMode and chkAlgo specify if the checksum is to be computed by the server, the client, both or none and what algorithm should
 // be used to compute that checksum
-func (c *Client) DownloadFile(serverAddr string, fileID string, size int, chkMode ChecksumMode, chkAlgo ChecksumAlgorithm, dst io.Writer) (report DownloadReport) {
+func (c *Client) DownloadFile(serverAddr string, fileID string, size int, chkMode ChecksumMode, chkAlgo ChecksumAlgorithm, dst io.Writer, plainHttp bool) (report DownloadReport) {
 	// Verify checksum
 	algorithm := getChecksumName(chkAlgo)
 	if chkMode != ChecksumNone && algorithm == "" {
@@ -117,8 +141,13 @@ func (c *Client) DownloadFile(serverAddr string, fileID string, size int, chkMod
 	}
 	doRequestChecksum := chkMode == ChecksumServerOnly || chkMode == ChecksumClientAndServer
 
+	scheme := "https"
+	if plainHttp {
+		scheme = "http"
+	}
+
 	u := &url.URL{
-		Scheme: "https",
+		Scheme: scheme,
 		Host:   serverAddr,
 		Path:   "/file",
 	}
@@ -219,8 +248,12 @@ func (c *Client) DownloadFile(serverAddr string, fileID string, size int, chkMod
 }
 
 // CloseIdleConnections closes idle TCP connections in use by this client
-func (c *Client) CloseIdleConnections() {
-	c.Client.Transport.(*http.Transport).CloseIdleConnections()
+func (c *Client) CloseIdleConnections(plainHttp, useHttp1 bool) {
+	if !plainHttp || useHttp1 {
+		c.Client.Transport.(*http.Transport).CloseIdleConnections()
+	} else {
+		c.Client.Transport.(*http2.Transport).CloseIdleConnections()
+	}
 }
 
 type ChecksumAlgorithm uint

@@ -5,16 +5,18 @@ import (
 	"os"
 	"strings"
 
-	"github.com/airnandez/chasqui/fileserver"
+	"github.com/wtakase/chasqui/fileserver"
 )
 
 type serverConfig struct {
 	// Command line options
-	help bool
-	addr string
-	ca   string
-	cert string
-	key  string
+	help      bool
+	addr      string
+	ca        string
+	cert      string
+	key       string
+	plainHttp bool
+	http1     bool
 }
 
 func serverCmd() command {
@@ -26,6 +28,8 @@ func serverCmd() command {
 	fset.StringVar(&config.ca, "ca", "ca.pem", "")
 	fset.StringVar(&config.cert, "cert", "cert.pem", "")
 	fset.StringVar(&config.key, "key", "key.pem", "")
+	fset.BoolVar(&config.plainHttp, "plain-http", false, "")
+	fset.BoolVar(&config.http1, "http1", false, "")
 	run := func(args []string) error {
 		fset.Usage = func() { serverUsage(args[0], os.Stderr) }
 		fset.Parse(args[1:])
@@ -44,12 +48,14 @@ func serverRun(cmdName string, config serverConfig) error {
 	debug(1, "   cert='%s'\n", config.cert)
 	debug(1, "   key='%s'\n", config.key)
 	debug(1, "   addr='%s'\n", config.addr)
+	debug(1, "   plainHttp='%s'\n", config.plainHttp)
+	debug(1, "   http1=%t\n", config.http1)
 
-	fs, err := fileserver.NewServer(config.addr, config.cert, config.key, config.ca)
+	fs, err := fileserver.NewServer(config.addr, config.cert, config.key, config.ca, config.plainHttp)
 	if err != nil {
 		return err
 	}
-	return fs.Serve()
+	return fs.Serve(config.plainHttp, config.http1)
 }
 
 //  masterUsage prints the usage information about the 'master' subcommand
@@ -90,6 +96,14 @@ OPTIONS:
 {{.Tab2}}path of the PEM-formatted file which contains the private key of
 {{.Tab2}}the certificate specified with the '-cert' option.
 {{.Tab2}}Default: key.pem
+
+{{.Tab1}}-plain-http=<file>
+{{.Tab2}}launchs a plain HTTP server without TLS.
+{{.Tab2}}Default: false
+
+{{.Tab1}}-http1
+{{.Tab2}}specifies that the protocol to be used for downloading files from the
+{{.Tab2}}server is HTTP1.1 instead ofthe default HTTP/2.
 
 {{.Tab1}}-help
 {{.Tab2}}print this help
