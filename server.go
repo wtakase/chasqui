@@ -97,7 +97,7 @@ OPTIONS:
 {{.Tab2}}the certificate specified with the '-cert' option.
 {{.Tab2}}Default: key.pem
 
-{{.Tab1}}-plain-http=<file>
+{{.Tab1}}-plain-http
 {{.Tab2}}launchs a plain HTTP server without TLS.
 {{.Tab2}}Default: false
 

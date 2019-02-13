@@ -18,7 +18,7 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/net/http2"
+	"github.com/wtakase/net/http2"
 )
 
 // Client is a client for interacting with a fileserver
@@ -31,9 +31,9 @@ type Client struct {
 // cert and key are the filenames of the certificate and key files the client will use
 // to identify itself with the server. ca is the file name of the certificate authorities' certificates the
 // client will accept and use to authenticate the server
-func NewClient(useHttp1 bool, cert, key, ca string, plainHttp bool) (*Client, error) {
+func NewClient(useHttp1 bool, cert, key, ca string, plainHttp bool, fct *http2.FlowControlTransport) (*Client, error) {
 	if plainHttp {
-		return NewPlainClient(useHttp1)
+		return NewPlainClient(useHttp1, fct)
 	}
 
 	// Prepare client TLS configuration
@@ -86,14 +86,14 @@ func NewClient(useHttp1 bool, cert, key, ca string, plainHttp bool) (*Client, er
 		MaxIdleConnsPerHost: 100, // TODO: what would be a sensible value?
 	}
 	if !useHttp1 {
-		http2.ConfigureTransport(tr) // Required: see issue https://github.com/golang/go/issues/17051
+		http2.ConfigureTransport(tr, fct) // Required: see issue https://github.com/golang/go/issues/17051
 	}
 	return &Client{http.Client{Transport: tr}}, nil
 }
 
 // NewPlainClient creates a new client to interact with a fileserver.
 // Set useHttp1 to true for this client to use HTTP1 instead of HTTP2, which is the default.
-func NewPlainClient(useHttp1 bool) (*Client, error) {
+func NewPlainClient(useHttp1 bool, fct *http2.FlowControlTransport) (*Client, error) {
 	if useHttp1 {
 		tr := &http.Transport{
 			MaxIdleConnsPerHost: 100, // TODO: what would be a sensible value?
@@ -105,6 +105,10 @@ func NewPlainClient(useHttp1 bool) (*Client, error) {
 			DialTLS: func(netw, addr string, cfg *tls.Config) (net.Conn, error) {
 				return net.Dial(netw, addr)
 			},
+			MaxFrameSize: fct.MaxFrameSize,
+			TransportDefaultConnFlow: fct.TransportDefaultConnFlow,
+			TransportDefaultStreamFlow: fct.TransportDefaultStreamFlow,
+			TransportDefaultStreamMinRefresh: fct.TransportDefaultStreamMinRefresh,
 		}
 		return &Client{http.Client{Transport: tr}}, nil
 	}

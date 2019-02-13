@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/wtakase/net/http2"
 )
 
 const (
@@ -23,15 +25,19 @@ const (
 
 type driverConfig struct {
 	// Command line options
-	help        bool
-	clients     string
-	servers     string
-	concurrency int
-	duration    time.Duration
-	http1       bool
-	meanSize    int
-	stdSize     float64
-	plainHttp   bool
+	help              bool
+	clients           string
+	servers           string
+	concurrency       int
+	duration          time.Duration
+	http1             bool
+	meanSize          int
+	stdSize           float64
+	plainHttp         bool
+	maxFrameSize      int
+	connWinSize       int
+	streamWinSize     int
+	winUpdateInterval int
 }
 
 func driverCmd() command {
@@ -48,6 +54,10 @@ func driverCmd() command {
 	fset.BoolVar(&config.http1, "http1", false, "")
 	fset.BoolVar(&config.help, "help", false, "")
 	fset.BoolVar(&config.plainHttp, "plain-http", false, "")
+	fset.IntVar(&config.maxFrameSize, "max-frame-size", 16384, "")
+	fset.IntVar(&config.connWinSize, "conn-win-size", 1073741824, "")
+	fset.IntVar(&config.streamWinSize, "stream-win-size", 4194304, "")
+	fset.IntVar(&config.winUpdateInterval, "win-update-interval", 4096, "")
 	run := func(args []string) error {
 		fset.Usage = func() { driverUsage(args[0], os.Stderr) }
 		fset.Parse(args[1:])
@@ -73,6 +83,10 @@ func driverRun(cmdName string, config driverConfig) error {
 	debug(1, "   meanSize=%d MB\n", config.meanSize)
 	debug(1, "   http1=%t\n", config.http1)
 	debug(1, "   plainHttp='%s'\n", config.plainHttp)
+	debug(1, "   maxFrameSize='%d'\n", config.maxFrameSize)
+	debug(1, "   connWinSize='%d'\n", config.connWinSize)
+	debug(1, "   streamWinSize='%d'\n", config.streamWinSize)
+	debug(1, "   winUpdateInterval='%d'\n", config.winUpdateInterval)
 
 	// Prepare collector of execution reports
 	clientAddrs := splitAndClean(config.clients)
@@ -83,6 +97,12 @@ func driverRun(cmdName string, config driverConfig) error {
 
 	// Send the same load request to each client processes
 	meanSize := uint64(config.meanSize) * uint64(MB)
+	fct := &http2.FlowControlTransport{
+		MaxFrameSize:                     uint32(config.maxFrameSize),
+		TransportDefaultConnFlow:         uint32(config.connWinSize),
+		TransportDefaultStreamFlow:       uint32(config.streamWinSize),
+		TransportDefaultStreamMinRefresh: uint32(config.winUpdateInterval),
+	}
 	loadReq := &LoadRequest{
 		ServerAddrs: splitAndClean(config.servers),
 		Concurrency: config.concurrency,
@@ -91,6 +111,7 @@ func driverRun(cmdName string, config driverConfig) error {
 		StdSize:     uint64(config.stdSize * float64(meanSize)),
 		UseHttp1:    config.http1,
 		PlainHttp:   config.plainHttp,
+		FlowControl: fct,
 	}
 	var sendGroup sync.WaitGroup
 	for _, cli := range clientAddrs {
@@ -267,9 +288,25 @@ OPTIONS:
 {{.Tab2}}specifies that the protocol to be used for downloading files from the
 {{.Tab2}}server is HTTP1.1 instead ofthe default HTTP/2.
 
-{{.Tab1}}-plain-http=<file>
+{{.Tab1}}-plain-http
 {{.Tab2}}uses plain HTTP without TLS.
 {{.Tab2}}Default: false
+
+{{.Tab1}}-max-frame-size=integer
+{{.Tab2}}specifies SETTINGS_MAX_FRAME_SIZE for HTTP/2.
+{{.Tab2}}Default: 16384
+
+{{.Tab1}}-conn-win-size=integer
+{{.Tab2}}specifies connection-level window size for HTTP/2.
+{{.Tab2}}Default: 1073741824
+
+{{.Tab1}}-stream-win-size=integer
+{{.Tab2}}specifies stream-level window size for HTTP/2.
+{{.Tab2}}Default: 4194304
+
+{{.Tab1}}-win-update-interval=integer
+{{.Tab2}}specifies window update interval for HTTP/2.
+{{.Tab2}}Default: 4096
 
 {{.Tab1}}-help
 {{.Tab2}}print this help

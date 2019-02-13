@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/wtakase/chasqui/fileserver"
+	"github.com/wtakase/net/http2"
 )
 
 const (
@@ -144,7 +145,7 @@ func clientProcessLoadRequest(config clientConfig, req *LoadRequest) (*LoadRespo
 	// Prepare the fileserver clients for serving this load request
 	fsclients := make([]*fileserver.Client, len(req.ServerAddrs))
 	for i := range req.ServerAddrs {
-		c, err := fileserver.NewClient(req.UseHttp1, config.cert, config.key, config.ca, req.PlainHttp)
+		c, err := fileserver.NewClient(req.UseHttp1, config.cert, config.key, config.ca, req.PlainHttp, req.FlowControl)
 		if err != nil {
 			return nil, fmt.Errorf("could not initialize fileserver client [%s]", err)
 		}
@@ -257,6 +258,9 @@ type LoadRequest struct {
 
 	// Use plain HTTP without TLS
 	PlainHttp bool
+
+	// Client side's HTTP/2 settings for flow control
+	FlowControl *http2.FlowControlTransport
 }
 
 type LoadResponse struct {
